@@ -19,26 +19,6 @@
         .prose li { margin-bottom: 0.25rem; }
         .chart-btn { transition: all 0.2s; }
         .chart-btn.active { background-color: #4f46e5; color: white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); }
-        /* ----- improved AI report styling ----- */
-        .ai-report-grid {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 1rem;
-        }
-        @media (min-width: 900px) { .ai-report-grid { grid-template-columns: 1fr 1fr; } }
-        .ai-card { background: white; border-radius: 0.5rem; padding: 1rem; box-shadow: 0 6px 18px rgba(15,23,42,0.06); border: 1px solid rgba(15,23,42,0.04); }
-        .ai-card h3 { margin: 0 0 .5rem 0; font-weight: 600; color: #5b21b6; }
-        .ai-card .meta { font-size: .9rem; color: #475569; margin-bottom: .5rem; }
-        .ai-card .prose { color: #0f172a; font-size: .95rem; line-height: 1.45; }
-        .ai-proc-actions { display:flex; gap:.5rem; align-items:center; margin-bottom:.5rem; }
-        .copy-btn { font-size: .8rem; padding: .35rem .6rem; border-radius: .35rem; border: 1px solid rgba(15,23,42,0.06); background: #f8fafc; cursor:pointer; }
-        .badge { display:inline-block; padding: .18rem .5rem; border-radius: 999px; font-size:.75rem; font-weight:600; color: white; margin-right:.4rem; }
-        .badge-high { background: #ef4444; } /* red */
-        .badge-medium { background: #f59e0b; } /* amber */
-        .badge-low { background: #10b981; } /* green */
-        .ai-prose h4 { margin-top: .6rem; margin-bottom: .35rem; font-size:1rem; color:#111827; }
-        .ai-prose ul, .ai-prose ol { margin-left: 1rem; margin-bottom: .6rem; }
-        .ai-prose li { margin-bottom: .25rem; }
     </style>
 </head>
 <body class="bg-slate-100 text-slate-800">
@@ -300,51 +280,6 @@ Example:
         return await callCohereAPI(payload);
     }
 
-    // lightweight markdown-ish -> HTML converter with badges
-    function markdownToHtml(md) {
-        if (!md) return '';
-        md = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        md = md.replace(/\*\*(.+?)\*\*/g, (m, p1) => `<strong>${esc(p1)}</strong>`);
-        const lines = md.split('\n');
-        let html = '';
-        let inUl = false, inOl = false;
-        const closeLists = () => { if (inUl) { html += '</ul>'; inUl = false; } if (inOl) { html += '</ol>'; inOl = false; } };
-        for (let i = 0; i < lines.length; i++) {
-            let line = lines[i].trim();
-            if (line === '') { closeLists(); html += '<p></p>'; continue; }
-            const h4 = line.match(/^#{4}\s+(.*)/);
-            if (h4) { closeLists(); html += `<h4>${esc(h4[1])}</h4>`; continue; }
-            const olMatch = line.match(/^\d+\.\s+(.*)/);
-            if (olMatch) { if (!inOl) { closeLists(); inOl = true; html += '<ol>'; } html += `<li>${esc(olMatch[1])}</li>`; continue; }
-            const ulMatch = line.match(/^[-*]\s+(.*)/);
-            if (ulMatch) { if (!inUl) { closeLists(); inUl = true; html += '<ul>'; } html += `<li>${esc(ulMatch[1])}</li>`; continue; }
-            html += `<p>${esc(line)}</p>`;
-        }
-        closeLists();
-        html = html.replace(/&lt;strong&gt;(.*?)&lt;\/strong&gt;/g, '<strong>$1</strong>');
-        return html;
-    }
-
-    // Extract Risk Priority -> badges and return converted HTML
-    function renderWithBadges(md) {
-        const lines = md.split('\n');
-        const badgeLines = [];
-        const otherLines = [];
-        for (const ln of lines) {
-            const m = ln.match(/^\s*[-\*]?\s*\*\*?Risk Priority:?[* ]*\**\s*:\s*(High|Medium|Low)/i) ||
-                    ln.match(/^\s*Risk Priority\s*[:\-]\s*(High|Medium|Low)/i);
-            if (m) { badgeLines.push(m[1]); } else { otherLines.push(ln); }
-        }
-        const badgesHtml = badgeLines.map(level => {
-            const lvl = (level || '').toLowerCase();
-            if (lvl === 'high') return `<span class="badge badge-high">HIGH</span>`;
-            if (lvl === 'medium') return `<span class="badge badge-medium">MEDIUM</span>`;
-            return `<span class="badge badge-low">LOW</span>`;
-        }).join(' ');
-        return { html: markdownToHtml(otherLines.join('\n')), badgesHtml };
-    }
-
     // --- UI & HELPER FUNCTIONS ---
     async function updateDashboard() {
         try {
@@ -444,44 +379,39 @@ Example:
     function createDynamicChart(chartData) {
         const ctx = document.getElementById('dynamic-analysis-chart');
         if (!ctx || !chartData) {
+            // No chart canvas or no data – skip drawing
             const chartContainer = document.getElementById('analysis-chart-output');
-            if (chartContainer) chartContainer.innerHTML += `<p class="text-red-500">Could not generate a visual analysis (missing data).</p>`;
+            if (chartContainer) {
+                chartContainer.innerHTML += `<p class="text-red-500">Could not generate a visual analysis (missing data).</p>`;
+            }
             return;
         }
-
-        // Validate basic shape
+        // Validate that labels and data arrays exist to avoid undefined .length errors
         if (!Array.isArray(chartData.labels) || !Array.isArray(chartData.data)) {
             const chartContainer = document.getElementById('analysis-chart-output');
-            if (chartContainer) chartContainer.innerHTML += `<p class="text-red-500">Invalid chart data format.</p>`;
+            if (chartContainer) {
+                chartContainer.innerHTML += `<p class="text-red-500">Invalid chart data format.</p>`;
+            }
             return;
         }
 
+        // If lengths don't match, trim/pad numbers to labels length
         const labelsLen = chartData.labels.length;
-        // Trim or pad data to match labels length
-        let dataArr = Array.isArray(chartData.data) ? chartData.data.slice(0, labelsLen) : [];
+        let dataArr = chartData.data.slice(0, labelsLen);
         while (dataArr.length < labelsLen) dataArr.push(0);
 
-        // Destroy previous chart if any
-        if (analysisChartInstance) analysisChartInstance.destroy();
-
-        // Colors
-        const CHART_COLORS = ['#3B82F6', '#10B981', '#FBBF24', '#EF4444', '#8B5CF6', '#EC4899', '#6B7280'];
-        const backgroundColors = Array.from({ length: labelsLen }, (_, i) => CHART_COLORS[i % CHART_COLORS.length]);
-
-        // Determine chart type (allow optional chartData.type from AI)
-        const supportedTypes = ['bar', 'line', 'pie', 'doughnut', 'polarArea', 'radar', 'horizontalBar'];
-        let chartType = 'bar'; // default
-        if (chartData.type && supportedTypes.includes(chartData.type)) {
-            chartType = chartData.type;
-        } else {
-            // Heuristic fallback: small number of labels -> pie/doughnut, otherwise bar
-            chartType = (labelsLen <= 6 && labelsLen > 1) ? 'pie' : 'bar';
+        if (analysisChartInstance) {
+            analysisChartInstance.destroy();
         }
 
-        // Build base config
-        const isPieLike = chartType === 'pie' || chartType === 'doughnut' || chartType === 'polarArea';
-        const config = {
-            type: chartType === 'horizontalBar' ? 'bar' : chartType,
+        const CHART_COLORS = ['#3B82F6', '#10B981', '#FBBF24', '#EF4444', '#8B5CF6', '#EC4899', '#6B7280'];
+        // Make a colors array matching data length
+        const backgroundColors = Array.from({length: labelsLen}, (_, i) => CHART_COLORS[i % CHART_COLORS.length]);
+
+        const isPie = labelsLen <= 6 && labelsLen > 1;
+
+        analysisChartInstance = new Chart(ctx.getContext('2d'), {
+            type: isPie ? 'pie' : 'bar',
             data: {
                 labels: chartData.labels,
                 datasets: [{
@@ -489,8 +419,7 @@ Example:
                     data: dataArr,
                     backgroundColor: backgroundColors,
                     borderColor: '#FFFFFF',
-                    borderWidth: 1,
-                    fill: chartType === 'line' ? false : undefined, // line: no fill by default
+                    borderWidth: 1
                 }]
             },
             options: {
@@ -503,7 +432,7 @@ Example:
                         color: '#fff',
                         font: { weight: 'bold' },
                         formatter: (value, context) => {
-                            if (isPieLike) {
+                            if (isPie) {
                                 const sum = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
                                 if (sum === 0) return '0%';
                                 return (value / sum * 100).toFixed(0) + '%';
@@ -514,33 +443,8 @@ Example:
                 }
             },
             plugins: [ChartDataLabels]
-        };
-
-        // If user asked for horizontalBar (legacy), set indexAxis
-        if (chartType === 'horizontalBar') {
-            config.options.indexAxis = 'y';
-        }
-
-        // Optional: support stacked charts if AI returns options: { stacked: true }
-        if (chartData.options && chartData.options.stacked) {
-            config.options.scales = {
-                x: { stacked: true },
-                y: { stacked: true }
-            };
-        }
-
-        // Optional: allow AI to request a time-series line (if chartData.options.timeSeries=true)
-        if (chartType === 'line' && chartData.options && chartData.options.timeSeries) {
-            // If labels look like dates, Chart.js can use category axis; for advanced time axis you would add 'time' adapter
-            // We'll just use line chart but allow smoothing or tension if requested
-            const tension = typeof chartData.options.tension === 'number' ? chartData.options.tension : 0.3;
-            config.data.datasets[0].tension = tension;
-        }
-
-        // Create the Chart
-        analysisChartInstance = new Chart(ctx.getContext('2d'), config);
+        });
     }
-
     // ---------------------------
 
     // ---------------------------
@@ -549,49 +453,24 @@ Example:
         if (!currentRecords || currentRecords.length === 0) return;
         loader.style.display = 'flex';
         resultsOutput.innerHTML = '';
-
         try {
             const formattedData = currentRecords.map(r => JSON.stringify(r.fields)).join('\n');
 
-            // First pass: ask AI for consultant, analysis and chart suggestions
             const results = await Promise.allSettled([
                 getConsultantSuggestionsFromAI(formattedData),
                 getAnalysisFromAI(formattedData),
                 getChartDataFromAI(formattedData)
             ]);
 
-            const consultantReport = results[0].status === 'fulfilled'
-                ? results[0].value.replace(/\n/g, '<br>')
-                : `<p class="text-red-500">AI Consultant Report failed: ${results[0].reason?.message || results[0].reason}</p>`;
+            const consultantReport = results[0].status === 'fulfilled' ? results[0].value.replace(/\n/g, '<br>') : `<p class="text-red-500">AI Consultant Report failed: ${results[0].reason?.message || results[0].reason}</p>`;
+            const analysisText = results[1].status === 'fulfilled' ? results[1].value.replace(/\n/g, '<br>') : `<p class="text-red-500">Data Summary failed: ${results[1].reason?.message || results[1].reason}</p>`;
+            const potentialCharts = results[2].status === 'fulfilled' ? results[2].value : [];
 
-            const analysisText = results[1].status === 'fulfilled'
-                ? results[1].value.replace(/\n/g, '<br>')
-                : `<p class="text-red-500">Data Summary failed: ${results[1].reason?.message || results[1].reason}</p>`;
-
-            let potentialCharts = results[2].status === 'fulfilled' ? results[2].value : [];
-
-            // Normalize: if AI returned a single object, wrap as array
-            if (potentialCharts && !Array.isArray(potentialCharts) && typeof potentialCharts === 'object') {
-                potentialCharts = [potentialCharts];
-            }
-
-            // Fallback: ask the AI again with an explicit instruction to return multiple / diverse chart types
-            if ((!Array.isArray(potentialCharts) || potentialCharts.length === 0)) {
-                console.warn('Initial chart generation returned nothing — requesting fallback with explicit multi-chart instruction.');
-                const fallbackMessage = formattedData + '\n\nPlease return AT LEAST 3 different chart objects (use different chart types where appropriate, e.g., bar, line, pie, doughnut, stacked bar). Return ONLY a JSON ARRAY of chart objects with keys: title, labels, data, and optionally type (e.g., "bar"|"line"|"pie"|"doughnut").';
-                const fallback = await getChartDataFromAI(fallbackMessage);
-                if (Array.isArray(fallback) && fallback.length > 0) potentialCharts = fallback;
-            }
-
-            // Ensure an array
-            if (!Array.isArray(potentialCharts)) potentialCharts = [];
-
-            // Render results UI
             resultsOutput.innerHTML = `
                 <div class="space-y-6">
                     <div id="consultant-report-output" class="p-4 border-2 border-purple-200 rounded bg-purple-50">
-                        <h3 class="text-xl font-bold mb-2 text-purple-800">AI Expert Consultant Report</h3>
-                        <div class="prose max-w-full">${consultantReport}</div>
+                         <h3 class="text-xl font-bold mb-2 text-purple-800">AI Expert Consultant Report</h3>
+                         <div class="prose max-w-full">${consultantReport}</div>
                     </div>
                     <div id="analysis-text-output" class="p-4 border rounded bg-slate-50">
                         <h3 class="text-lg font-semibold mb-2 text-slate-700">Data Summary:</h3>
@@ -605,16 +484,8 @@ Example:
                 </div>`;
 
             const chartSelector = document.getElementById('chart-selector');
-
-            if (potentialCharts.length > 0) {
-                // Use a Set to avoid duplicate titles/buttons
-                const seen = new Set();
+            if (Array.isArray(potentialCharts) && potentialCharts.length > 0) {
                 potentialCharts.forEach((chart, index) => {
-                    // Basic validation
-                    if (!chart || typeof chart.title !== 'string' || !Array.isArray(chart.labels) || !Array.isArray(chart.data)) return;
-                    if (seen.has(chart.title)) return;
-                    seen.add(chart.title);
-
                     const button = document.createElement('button');
                     button.textContent = chart.title || `Chart ${index + 1}`;
                     button.className = 'chart-btn bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-1 px-3 rounded-md text-sm';
@@ -624,17 +495,11 @@ Example:
                         createDynamicChart(chart);
                     };
                     chartSelector.appendChild(button);
-
-                    // auto show first valid chart
-                    if (seen.size === 1) button.click();
+                    // Automatically display the first chart
+                    if (index === 0) button.click();
                 });
-                if (seen.size === 0) {
-                    chartSelector.innerHTML = `<p class="text-slate-500 text-sm">AI returned charts but none were valid. Check console for raw response.</p>`;
-                    console.warn('PotentialCharts (invalid):', potentialCharts);
-                }
             } else {
                 chartSelector.innerHTML = `<p class="text-slate-500 text-sm">No unique data found to generate charts.</p>`;
-                console.warn('No chart suggestions from AI (potentialCharts empty).');
             }
 
         } catch (error) {
@@ -644,7 +509,6 @@ Example:
             loader.style.display = 'none';
         }
     }
-
     // ---------------------------
 
     async function initializeApp(keys) {
