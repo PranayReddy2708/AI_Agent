@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>AI Vehicle Test Tracker Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .modal { display: none; }
+        .modal.is-open { display: flex; }
+        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .prose h4 { font-size: 1.125rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
+        .prose ul { list-style-type: disc; padding-left: 1.5rem; }
+        .prose li { margin-bottom: 0.25rem; }
+        .chart-btn { transition: all 0.2s; }
+        .chart-btn.active { background-color: #4f46e5; color: white; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); }
+        /* ----- improved AI report styling ----- */
+        .ai-report-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        }
+        @media (min-width: 900px) { .ai-report-grid { grid-template-columns: 1fr 1fr; } }
+        .ai-card { background: white; border-radius: 0.5rem; padding: 1rem; box-shadow: 0 6px 18px rgba(15,23,42,0.06); border: 1px solid rgba(15,23,42,0.04); }
+        .ai-card h3 { margin: 0 0 .5rem 0; font-weight: 600; color: #5b21b6; }
+        .ai-card .meta { font-size: .9rem; color: #475569; margin-bottom: .5rem; }
+        .ai-card .prose { color: #0f172a; font-size: .95rem; line-height: 1.45; }
+        .ai-proc-actions { display:flex; gap:.5rem; align-items:center; margin-bottom:.5rem; }
+        .copy-btn { font-size: .8rem; padding: .35rem .6rem; border-radius: .35rem; border: 1px solid rgba(15,23,42,0.06); background: #f8fafc; cursor:pointer; }
+        .badge { display:inline-block; padding: .18rem .5rem; border-radius: 999px; font-size:.75rem; font-weight:600; color: white; margin-right:.4rem; }
+        .badge-high { background: #ef4444; } /* red */
+        .badge-medium { background: #f59e0b; } /* amber */
+        .badge-low { background: #10b981; } /* green */
+        .ai-prose h4 { margin-top: .6rem; margin-bottom: .35rem; font-size:1rem; color:#111827; }
+        .ai-prose ul, .ai-prose ol { margin-left: 1rem; margin-bottom: .6rem; }
+        .ai-prose li { margin-bottom: .25rem; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+
+<!-- API Key Modal -->
+    <div id="api-key-modal" class="modal is-open fixed inset-0 bg-black bg-opacity-60 items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-lg shadow-2xl p-6 md:p-8 w-full max-w-lg">
+            <h2 class="text-2xl font-bold text-slate-900 mb-4">Setup Required</h2>
+            <p class="text-slate-600 mb-6">Please provide your API keys. They are saved only in your browser.</p>
+            <div id="connection-status" class="mb-4 p-3 rounded-md text-sm hidden"></div>
+            <div class="space-y-4">
+                <input type="password" id="cohere-key" class="block w-full px-3 py-2 bg-white border border-slate-300 rounded-md" placeholder="Cohere Trial API Key">
+                <input type="password" id="airtable-key" class="block w-full px-3 py-2 bg-white border border-slate-300 rounded-md" placeholder="Airtable Personal Access Token (pat...)">
+                <input type="text" id="airtable-base-id" class="block w-full px-3 py-2 bg-white border border-slate-300 rounded-md" placeholder="Airtable Base ID (app...)">
+                <input type="text" id="airtable-table-name" class="block w-full px-3 py-2 bg-white border border-slate-300 rounded-md" placeholder="Airtable Table Name (e.g., Tasks)">
+            </div>
+            <div class="mt-8 flex gap-4">
+                <button id="test-connection-btn" class="w-1/2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-2 px-4 rounded-lg">Test Connection</button>
+                <button id="save-keys-btn" class="w-1/2 bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-lg">Save and Start</button>
+            </div>
+        </div>
+    </div>
+
+<!-- Edit Modal -->
+    <div id="edit-modal" class="modal fixed inset-0 bg-black bg-opacity-60 items-center justify-center p-4 z-40 overflow-y-auto">
+        <div class="bg-white rounded-lg shadow-2xl p-6 md:p-8 w-full max-w-lg my-8">
+            <h2 class="text-2xl font-bold text-slate-900 mb-4">Update Test Record</h2>
+            <form id="edit-form" class="space-y-4">
+                <input type="hidden" id="edit-record-id">
+                <div><label for="edit-Test_Id" class="block text-sm font-medium text-slate-700">Test Id</label><input type="text" id="edit-Test_Id" placeholder="Enter official Test Id" class="w-full p-2 border rounded mt-1"></div>
+                <div><label for="edit-Status" class="block text-sm font-medium text-slate-700">Status</label><select id="edit-Status" required class="w-full p-2 border rounded mt-1"></select></div>
+                <div><label for="edit-End_Date" class="block text-sm font-medium text-slate-700">End Date</label><input type="date" id="edit-End_Date" class="w-full p-2 border rounded mt-1"></div>
+                <div><label for="edit-Failure_Type" class="block text-sm font-medium text-slate-700">Failure Type (comma-separated)</label><input type="text" id="edit-Failure_Type" placeholder="e.g., Weld Crack, Bolt Fatigue" class="w-full p-2 border rounded mt-1"></div>
+                <div><label for="edit-Failure_Part" class="block text-sm font-medium text-slate-700">Failure Part (comma-separated)</label><input type="text" id="edit-Failure_Part" placeholder="e.g., Chassis, Suspension" class="w-full p-2 border rounded mt-1"></div>
+                <div><label for="edit-Failure_Observation" class="block text-sm font-medium text-slate-700">Failure Observation</label><textarea id="edit-Failure_Observation" placeholder="Describe the failure..." class="w-full p-2 border rounded mt-1" rows="3"></textarea></div>
+                <div><label for="edit-Failed_km_cycles" class="block text-sm font-medium text-slate-700">Failed km/cycles</label><input type="number" id="edit-Failed_km_cycles" placeholder="Failed km/cycles" class="w-full p-2 border rounded mt-1"></div>
+                <div class="flex gap-4 mt-8">
+                    <button type="button" id="cancel-edit-btn" class="w-full bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold py-2 px-4 rounded-lg">Cancel</button>
+                    <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+<!-- Dashboard & Forms -->
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-10">
+            <h1 class="text-3xl md:text-4xl font-bold text-slate-900">AI Vehicle Test Tracker</h1>
+            <p class="text-slate-600 mt-2">Log data, search records, and get AI-powered expert insights.</p>
+        </header>
+
+        <div id="dashboard" class="mb-8 bg-white rounded-lg shadow-md p-6">
+            <div class="flex justify-between items-center">
+                <div class="text-center flex-1">
+                    <h3 class="text-lg font-medium text-yellow-600">Tests Currently In Progress</h3>
+                    <button id="kpi-in-progress-btn" class="w-full text-center group">
+                        <p id="kpi-in-progress" class="text-5xl font-bold text-yellow-700 group-hover:text-yellow-600 group-hover:underline">--</p>
+                        <span class="text-xs text-slate-500 group-hover:text-slate-700">(Click to view details)</span>
+                    </button>
+                </div>
+                <button id="refresh-dashboard-btn" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-3 rounded-lg text-sm self-start">Refresh</button>
+            </div>
+        </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div class="lg:col-span-1">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-2xl font-bold text-slate-900 mb-4">Log New Test Data</h2>
+                <form id="test-data-form" class="space-y-4">
+                    <input type="text" id="Project" placeholder="Project" required class="w-full p-2 border rounded">
+                    <input type="date" id="Date" required class="w-full p-2 border rounded">
+                    <input type="text" id="Test_Id" placeholder="Test Id (can add later)" class="w-full p-2 border rounded">
+                    <input type="text" id="Stage" placeholder="Stage" required class="w-full p-2 border rounded">
+                    <input type="text" id="Test_Name" placeholder="Test Name" required class="w-full p-2 border rounded">
+                    <select id="Status" required class="w-full p-2 border rounded"></select>
+                    <input type="date" id="Start_Date" class="w-full p-2 border rounded" title="Start Date">
+                    <input type="number" id="Spec_Km_cycles" placeholder="Spec Km/cycles" required class="w-full p-2 border rounded">
+                    <button type="submit" class="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-lg">Add Test Record</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="lg:col-span-2 space-y-8">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-2xl font-bold text-slate-900 mb-4">Search for Data</h2>
+                <div class="flex gap-2">
+                    <input type="text" id="search-prompt" placeholder="e.g., N600 failed weld crack" class="w-full p-2 border rounded">
+                    <button id="search-btn" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg">Search</button>
+                </div>
+            </div>
+            <div id="results-container" class="bg-white rounded-lg shadow-md p-6 min-h-[200px]">
+                <div id="loader" class="hidden justify-center items-center flex gap-4"><div class="loader"></div><p class="ml-4 text-slate-600">AI is thinking...</p></div>
+                <div id="results-output" class="text-slate-600"><p>Search results will appear here.</p></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // --- ELEMENT SELECTORS ---
+    const apiKeyModal = document.getElementById('api-key-modal');
+    const saveKeysBtn = document.getElementById('save-keys-btn');
+    const testConnectionBtn = document.getElementById('test-connection-btn');
+    const connectionStatus = document.getElementById('connection-status');
+    const editModal = document.getElementById('edit-modal');
+    const editForm = document.getElementById('edit-form');
+    const cancelEditBtn = document.getElementById('cancel-edit-btn');
+    const searchBtn = document.getElementById('search-btn');
+    const testDataForm = document.getElementById('test-data-form');
+    const loader = document.getElementById('loader');
+    const resultsOutput = document.getElementById('results-output');
+    const refreshDashboardBtn = document.getElementById('refresh-dashboard-btn');
+    const kpiInProgressBtn = document.getElementById('kpi-in-progress-btn');
+
+    // --- GLOBAL STATE ---
+    let cohereApiKey, airtableApiKey, airtableBaseId, airtableTableName;
+    let statusOptions = [], fieldOrder = [], currentRecords = [], analysisChartInstance;
+
+    // --- CORE API FUNCTIONS ---
+    async function fetchAirtableSchema(key, baseId, tableName) {
+        const url = `https://api.airtable.com/v0/meta/bases/${baseId}/tables`;
+        const response = await fetch(url, { headers: { 'Authorization': `Bearer ${key}` } });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`Airtable Schema Error: ${errorData.error?.message || 'Check Base ID, Table Name, and token permissions (schema.bases:read).'}`);
+        }
+        const schema = await response.json();
+        const table = schema.tables.find(t => t.name === tableName);
+        if (!table) throw new Error(`Table named "${tableName}" not found.`);
+        fieldOrder = table.fields.map(f => f.name);
+        const statusField = table.fields.find(f => f.name === 'Status');
+        if (statusField && statusField.type === 'singleSelect') statusOptions = statusField.options.choices.map(c => c.name);
+    }
+
+    async function fetchAirtableData(filterByFormula, isSilent = false) {
+        if (!isSilent) loader.style.display = 'flex';
+        let url = `https://api.airtable.com/v0/${airtableBaseId}/${encodeURIComponent(airtableTableName)}`;
+        if (filterByFormula) url += `?filterByFormula=${encodeURIComponent(filterByFormula)}`;
+        try {
+            const response = await fetch(url, { headers: { 'Authorization': `Bearer ${airtableApiKey}` } });
+            if (!response.ok) { const errorData = await response.json().catch(() => ({})); throw new Error(`Airtable Fetch Error: ${errorData.error?.message || 'Check keys/permissions.'}`); }
+            const data = await response.json();
+            return data.records;
+        } finally {
+            if (!isSilent) loader.style.display = 'none';
+        }
+    }
+
+    async function callCohereAPI({ message, preamble = "", temperature = 0.7 }) {
+        const apiUrl = "https://api.cohere.ai/v2/chat";
+        const payload = {
+            model: "command-a-03-2025",
+            messages: [
+                { role: "system", content: preamble },
+                { role: "user", content: message }
+            ],
+            temperature: temperature
+        };
+
+        const response = await fetch(apiUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${cohereApiKey}`
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Cohere API Error (${response.status}): ${text}`);
+        }
+
+        const json = await response.json();
+        console.log("Cohere raw response:", json);
+
+        // Extract AI response text
+        if (json && json.message && Array.isArray(json.message.content)) {
+            const first = json.message.content.find(c => c.type === "text");
+            if (first && first.text) return first.text;
+        }
+
+        // Some Cohere responses use "text" at top level in "response" or other key forms.
+        // Try common fallback:
+        if (json && typeof json === 'object') {
+            // Flatten to string if anything else exists
+            const possibleText = JSON.stringify(json);
+            return possibleText;
+        }
+
+        throw new Error("Cohere API returned unexpected response structure");
+    }
+
+    // --- AI BRAIN FUNCTIONS ---
+    async function getAirtableFormulaFromPrompt(prompt) {
+        const preamble = `You are a master AI logician. Your only job is to convert a user's natural language query into a flawless Airtable "filterByFormula" string. You must return ONLY the formula.
+        PROCESS:
+        1.  Identify the user's INTENT: Are they filtering with AND, OR, or a combination?
+        2.  Identify all KEY-VALUE pairs (e.g., {Project}="N600", {Status}="Failed").
+        3.  Build the formula with these RULES:
+            - Use SEARCH(LOWER("term"), LOWER({Field})) for all text fields.
+            - Use LOWER({Status}) = LOWER("value") for the 'Status' field.
+            - Correctly nest AND() and OR() clauses as needed.
+        The available fields are: ${fieldOrder.map(f => `{${f}}`).join(', ')}.
+        The Status field has these exact options: "${statusOptions.join('", "')}".`;
+        const payload = { message: prompt, preamble: preamble, temperature: 0 };
+        return await callCohereAPI(payload);
+    }
+
+    async function getAnalysisFromAI(data) {
+        const preamble = `You are a senior data scientist. Your task is to perform an initial exploratory data analysis (EDA) on the provided JSON data from a vehicle testing lab. Identify key statistical trends, outliers, and correlations. Specifically look for relationships between 'Failure Type', 'Failure Part', and 'Project'. Provide your findings as a concise, bulleted list under the heading #### Key Findings.`;
+        const payload = { message: `Here is the data for EDA:\n\n${data}`, preamble: preamble, temperature: 0.3 };
+        return await callCohereAPI(payload);
+    }
+
+    // ---------------------------
+    // UPDATED: getChartDataFromAI (Cohere) -> returns ARRAY of chart objects
+    // Each object: { title: "Failures by Type", labels: [...], data: [...] }
+    async function getChartDataFromAI(data) {
+        const preamble = `You are a data visualization expert. Analyze the provided JSON records and RETURN ONLY a JSON ARRAY of chart objects.
+Each object must have:
+- "title": string
+- "labels": array of strings
+- "data": array of numbers
+
+Only include charts that make sense for the data (e.g., Failures by Type, Status Distribution, Failures by Project).
+Skip charts that would only have a single label (no distribution).
+Return ONLY the JSON array and nothing else.
+
+Example:
+[{"title":"Failures by Type","labels":["Weld Crack","Bolt Fatigue"],"data":[5,2]},{"title":"Status Distribution","labels":["Failed","In Progress"],"data":[7,3]}]`;
+
+        const payload = { message: `Create chart JSON array for this data:\n\n${data}`, preamble: preamble, temperature: 0 };
+        const resultText = await callCohereAPI(payload);
+
+        // Robustly extract JSON array from response text
+        try {
+            const jsonMatch = resultText.match(/\[[\s\S]*\]/);
+            if (!jsonMatch) {
+                console.error("No JSON array found in Cohere response for charts:", resultText);
+                return []; // safe fallback
+            }
+            const arr = JSON.parse(jsonMatch[0]);
+            if (!Array.isArray(arr)) throw new Error("Parsed value is not an array");
+            // Minimal validation: ensure each has title, labels array and data array
+            const valid = arr.filter(c => c && typeof c.title === 'string' && Array.isArray(c.labels) && Array.isArray(c.data));
+            return valid;
+        } catch (e) {
+            console.error("Failed to parse chart JSON array from Cohere:", e, resultText);
+            return []; // safe fallback
+        }
+    }
+    // ---------------------------
+
+    async function getConsultantSuggestionsFromAI(data) {
+        const preamble = `You are a Chief Reliability Engineer for a major automotive OEM, with 20 years of experience in durability testing, failure analysis, and structural design. Your expertise includes FMEA, materials science, and manufacturing processes. Your task is to analyze the provided test failure data from this expert perspective. Connect the observed failures to specific, real-world engineering principles. Your suggestions should be prioritized based on a risk assessment (likelihood vs. severity), using fields like 'Failed km/cycles' vs. 'Spec Km/cycles' to justify your assessment. Provide a concise, professional report with your key observation, potential root causes, and actionable suggestions for the engineering team. Structure your response in three sections using markdown headings: #### Key Observation, #### Potential Root Causes, #### Actionable Suggestions.`;
+        const payload = { message: `Here is the data for your analysis:\n\n${data}`, preamble: preamble, temperature: 0.5 };
+        return await callCohereAPI(payload);
+    }
+
+    // lightweight markdown-ish -> HTML converter with badges
+    function markdownToHtml(md) {
+        if (!md) return '';
+        md = md.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        md = md.replace(/\*\*(.+?)\*\*/g, (m, p1) => `<strong>${esc(p1)}</strong>`);
+        const lines = md.split('\n');
+        let html = '';
+        let inUl = false, inOl = false;
+        const closeLists = () => { if (inUl) { html += '</ul>'; inUl = false; } if (inOl) { html += '</ol>'; inOl = false; } };
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i].trim();
+            if (line === '') { closeLists(); html += '<p></p>'; continue; }
+            const h4 = line.match(/^#{4}\s+(.*)/);
+            if (h4) { closeLists(); html += `<h4>${esc(h4[1])}</h4>`; continue; }
+            const olMatch = line.match(/^\d+\.\s+(.*)/);
+            if (olMatch) { if (!inOl) { closeLists(); inOl = true; html += '<ol>'; } html += `<li>${esc(olMatch[1])}</li>`; continue; }
+            const ulMatch = line.match(/^[-*]\s+(.*)/);
+            if (ulMatch) { if (!inUl) { closeLists(); inUl = true; html += '<ul>'; } html += `<li>${esc(ulMatch[1])}</li>`; continue; }
+            html += `<p>${esc(line)}</p>`;
+        }
+        closeLists();
+        html = html.replace(/&lt;strong&gt;(.*?)&lt;\/strong&gt;/g, '<strong>$1</strong>');
+        return html;
+    }
+
+    // Extract Risk Priority -> badges and return converted HTML
+    function renderWithBadges(md) {
+        const lines = md.split('\n');
+        const badgeLines = [];
+        const otherLines = [];
+        for (const ln of lines) {
+            const m = ln.match(/^\s*[-\*]?\s*\*\*?Risk Priority:?[* ]*\**\s*:\s*(High|Medium|Low)/i) ||
+                    ln.match(/^\s*Risk Priority\s*[:\-]\s*(High|Medium|Low)/i);
+            if (m) { badgeLines.push(m[1]); } else { otherLines.push(ln); }
+        }
+        const badgesHtml = badgeLines.map(level => {
+            const lvl = (level || '').toLowerCase();
+            if (lvl === 'high') return `<span class="badge badge-high">HIGH</span>`;
+            if (lvl === 'medium') return `<span class="badge badge-medium">MEDIUM</span>`;
+            return `<span class="badge badge-low">LOW</span>`;
+        }).join(' ');
+        return { html: markdownToHtml(otherLines.join('\n')), badgesHtml };
+    }
+
+    // --- UI & HELPER FUNCTIONS ---
+    async function updateDashboard() {
+        try {
+            const records = await fetchAirtableData(null, true);
+            if (!records) return;
+            const inProgressTests = records.filter(r => r.fields.Status === 'In Progress').length;
+            kpiInProgressBtn.querySelector('p').textContent = inProgressTests;
+        } catch (error) {
+            console.error("Dashboard update failed:", error);
+            kpiInProgressBtn.querySelector('p').textContent = 'Error';
+        }
+    }
+
+    function populateDropdowns() {
+        const statusDropdowns = [document.getElementById('Status'), document.getElementById('edit-Status')];
+        statusDropdowns.forEach(dropdown => {
+            if (!dropdown) return;
+            dropdown.innerHTML = '';
+            statusOptions.forEach(option => {
+                const opt = document.createElement('option');
+                opt.value = option;
+                opt.textContent = option;
+                dropdown.appendChild(opt);
+            });
+        });
+    }
+
+    function displayTabularResults(records) {
+        currentRecords = records;
+
+        if (!records || records.length === 0) {
+            resultsOutput.innerHTML = '<p>No matching records found.</p>';
+            return;
+        }
+
+        // --- Force proper header order ---
+        const headers = fieldOrder.slice(); // use all fields in defined order
+
+        // --- Analyze button ---
+        let headerHtml = `<div class="mb-4">
+            <button id="analyze-results-btn" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg">
+                Analyze These ${records.length} Results with AI
+            </button>
+        </div>`;
+
+        // --- Table header ---
+        let tableHtml = '<div class="overflow-x-auto"><table class="w-full text-left border-collapse">';
+        tableHtml += '<thead><tr class="bg-slate-200">';
+        headers.forEach(h => tableHtml += `<th class="p-2 border-b whitespace-nowrap">${h}</th>`);
+        tableHtml += `<th class="p-2 border-b">Actions</th></tr></thead><tbody>`;
+
+        // --- Table body ---
+        records.forEach(record => {
+            tableHtml += '<tr class="border-b hover:bg-slate-50">';
+            headers.forEach(header => {
+                const cellValue = Array.isArray(record.fields[header])
+                    ? record.fields[header].join(', ')
+                    : record.fields[header];
+                tableHtml += `<td class="p-2 align-top">${cellValue || ''}</td>`;
+            });
+            tableHtml += `<td class="p-2 align-top">
+                <button class="edit-btn bg-blue-500 hover:bg-blue-600 text-white text-xs py-1 px-2 rounded" data-record-id='${record.id}'>Edit</button>
+            </td>`;
+            tableHtml += '</tr>';
+        });
+
+        tableHtml += '</tbody></table></div>';
+
+        // --- Render ---
+        resultsOutput.innerHTML = headerHtml + tableHtml;
+
+        // --- Event listeners ---
+        document.getElementById('analyze-results-btn').addEventListener('click', handleAnalysis);
+        document.querySelectorAll('.edit-btn').forEach(button => {
+            button.addEventListener('click', (e) => {
+                const recordId = e.target.getAttribute('data-record-id');
+                const record = records.find(r => r.id === recordId);
+                openEditModal(record);
+            });
+        });
+    }
+
+    function openEditModal(record) {
+        document.getElementById('edit-record-id').value = record.id;
+        document.getElementById('edit-Test_Id').value = record.fields['Test Id'] || '';
+        document.getElementById('edit-Status').value = record.fields['Status'] || '';
+        document.getElementById('edit-End_Date').value = record.fields['End Date'] || '';
+        document.getElementById('edit-Failure_Type').value = (record.fields['Failure Type'] || []).join(', ');
+        document.getElementById('edit-Failure_Part').value = (record.fields['Failure Part'] || []).join(', ');
+        document.getElementById('edit-Failure_Observation').value = record.fields['Failure Observation'] || '';
+        document.getElementById('edit-Failed_km_cycles').value = record.fields['Failed km/cycles'] || '';
+        editModal.classList.add('is-open');
+    }
+
+    // ---------------------------
+    // UPDATED: createDynamicChart (Hardened)
+    function createDynamicChart(chartData) {
+        const ctx = document.getElementById('dynamic-analysis-chart');
+        if (!ctx || !chartData) {
+            const chartContainer = document.getElementById('analysis-chart-output');
+            if (chartContainer) chartContainer.innerHTML += `<p class="text-red-500">Could not generate a visual analysis (missing data).</p>`;
+            return;
+        }
+
+        // Validate basic shape
+        if (!Array.isArray(chartData.labels) || !Array.isArray(chartData.data)) {
+            const chartContainer = document.getElementById('analysis-chart-output');
+            if (chartContainer) chartContainer.innerHTML += `<p class="text-red-500">Invalid chart data format.</p>`;
+            return;
+        }
+
+        const labelsLen = chartData.labels.length;
+        // Trim or pad data to match labels length
+        let dataArr = Array.isArray(chartData.data) ? chartData.data.slice(0, labelsLen) : [];
+        while (dataArr.length < labelsLen) dataArr.push(0);
+
+        // Destroy previous chart if any
+        if (analysisChartInstance) analysisChartInstance.destroy();
+
+        // Colors
+        const CHART_COLORS = ['#3B82F6', '#10B981', '#FBBF24', '#EF4444', '#8B5CF6', '#EC4899', '#6B7280'];
+        const backgroundColors = Array.from({ length: labelsLen }, (_, i) => CHART_COLORS[i % CHART_COLORS.length]);
+
+        // Determine chart type (allow optional chartData.type from AI)
+        const supportedTypes = ['bar', 'line', 'pie', 'doughnut', 'polarArea', 'radar', 'horizontalBar'];
+        let chartType = 'bar'; // default
+        if (chartData.type && supportedTypes.includes(chartData.type)) {
+            chartType = chartData.type;
+        } else {
+            // Heuristic fallback: small number of labels -> pie/doughnut, otherwise bar
+            chartType = (labelsLen <= 6 && labelsLen > 1) ? 'pie' : 'bar';
+        }
+
+        // Build base config
+        const isPieLike = chartType === 'pie' || chartType === 'doughnut' || chartType === 'polarArea';
+        const config = {
+            type: chartType === 'horizontalBar' ? 'bar' : chartType,
+            data: {
+                labels: chartData.labels,
+                datasets: [{
+                    label: chartData.title || '',
+                    data: dataArr,
+                    backgroundColor: backgroundColors,
+                    borderColor: '#FFFFFF',
+                    borderWidth: 1,
+                    fill: chartType === 'line' ? false : undefined, // line: no fill by default
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    title: { display: true, text: chartData.title || '', font: { size: 16 } },
+                    legend: { display: true, position: 'bottom' },
+                    datalabels: {
+                        color: '#fff',
+                        font: { weight: 'bold' },
+                        formatter: (value, context) => {
+                            if (isPieLike) {
+                                const sum = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                                if (sum === 0) return '0%';
+                                return (value / sum * 100).toFixed(0) + '%';
+                            }
+                            return value;
+                        }
+                    }
+                }
+            },
+            plugins: [ChartDataLabels]
+        };
+
+        // If user asked for horizontalBar (legacy), set indexAxis
+        if (chartType === 'horizontalBar') {
+            config.options.indexAxis = 'y';
+        }
+
+        // Optional: support stacked charts if AI returns options: { stacked: true }
+        if (chartData.options && chartData.options.stacked) {
+            config.options.scales = {
+                x: { stacked: true },
+                y: { stacked: true }
+            };
+        }
+
+        // Optional: allow AI to request a time-series line (if chartData.options.timeSeries=true)
+        if (chartType === 'line' && chartData.options && chartData.options.timeSeries) {
+            // If labels look like dates, Chart.js can use category axis; for advanced time axis you would add 'time' adapter
+            // We'll just use line chart but allow smoothing or tension if requested
+            const tension = typeof chartData.options.tension === 'number' ? chartData.options.tension : 0.3;
+            config.data.datasets[0].tension = tension;
+        }
+
+        // Create the Chart
+        analysisChartInstance = new Chart(ctx.getContext('2d'), config);
+    }
+
+    // ---------------------------
+
+    // ---------------------------
+    // UPDATED: handleAnalysis to accept multiple charts and build selector
+    async function handleAnalysis() {
+        if (!currentRecords || currentRecords.length === 0) return;
+        loader.style.display = 'flex';
+        resultsOutput.innerHTML = '';
+
+        try {
+            const formattedData = currentRecords.map(r => JSON.stringify(r.fields)).join('\n');
+
+            // First pass: ask AI for consultant, analysis and chart suggestions
+            const results = await Promise.allSettled([
+                getConsultantSuggestionsFromAI(formattedData),
+                getAnalysisFromAI(formattedData),
+                getChartDataFromAI(formattedData)
+            ]);
+
+            const consultantReport = results[0].status === 'fulfilled'
+                ? results[0].value.replace(/\n/g, '<br>')
+                : `<p class="text-red-500">AI Consultant Report failed: ${results[0].reason?.message || results[0].reason}</p>`;
+
+            const analysisText = results[1].status === 'fulfilled'
+                ? results[1].value.replace(/\n/g, '<br>')
+                : `<p class="text-red-500">Data Summary failed: ${results[1].reason?.message || results[1].reason}</p>`;
+
+            let potentialCharts = results[2].status === 'fulfilled' ? results[2].value : [];
+
+            // Normalize: if AI returned a single object, wrap as array
+            if (potentialCharts && !Array.isArray(potentialCharts) && typeof potentialCharts === 'object') {
+                potentialCharts = [potentialCharts];
+            }
+
+            // Fallback: ask the AI again with an explicit instruction to return multiple / diverse chart types
+            if ((!Array.isArray(potentialCharts) || potentialCharts.length === 0)) {
+                console.warn('Initial chart generation returned nothing — requesting fallback with explicit multi-chart instruction.');
+                const fallbackMessage = formattedData + '\n\nPlease return AT LEAST 3 different chart objects (use different chart types where appropriate, e.g., bar, line, pie, doughnut, stacked bar). Return ONLY a JSON ARRAY of chart objects with keys: title, labels, data, and optionally type (e.g., "bar"|"line"|"pie"|"doughnut").';
+                const fallback = await getChartDataFromAI(fallbackMessage);
+                if (Array.isArray(fallback) && fallback.length > 0) potentialCharts = fallback;
+            }
+
+            // Ensure an array
+            if (!Array.isArray(potentialCharts)) potentialCharts = [];
+
+            // Render results UI
+            resultsOutput.innerHTML = `
+                <div class="space-y-6">
+                    <div id="consultant-report-output" class="p-4 border-2 border-purple-200 rounded bg-purple-50">
+                        <h3 class="text-xl font-bold mb-2 text-purple-800">AI Expert Consultant Report</h3>
+                        <div class="prose max-w-full">${consultantReport}</div>
+                    </div>
+                    <div id="analysis-text-output" class="p-4 border rounded bg-slate-50">
+                        <h3 class="text-lg font-semibold mb-2 text-slate-700">Data Summary:</h3>
+                        <div class="prose max-w-full text-sm">${analysisText}</div>
+                    </div>
+                    <div id="analysis-chart-output" class="p-4 border rounded bg-slate-50">
+                        <h3 class="text-lg font-semibold mb-2 text-slate-700">Visual Analysis</h3>
+                        <div id="chart-selector" class="flex flex-wrap gap-2 mb-4"></div>
+                        <canvas id="dynamic-analysis-chart"></canvas>
+                    </div>
+                </div>`;
+
+            const chartSelector = document.getElementById('chart-selector');
+
+            if (potentialCharts.length > 0) {
+                // Use a Set to avoid duplicate titles/buttons
+                const seen = new Set();
+                potentialCharts.forEach((chart, index) => {
+                    // Basic validation
+                    if (!chart || typeof chart.title !== 'string' || !Array.isArray(chart.labels) || !Array.isArray(chart.data)) return;
+                    if (seen.has(chart.title)) return;
+                    seen.add(chart.title);
+
+                    const button = document.createElement('button');
+                    button.textContent = chart.title || `Chart ${index + 1}`;
+                    button.className = 'chart-btn bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-1 px-3 rounded-md text-sm';
+                    button.onclick = () => {
+                        document.querySelectorAll('.chart-btn').forEach(btn => btn.classList.remove('active'));
+                        button.classList.add('active');
+                        createDynamicChart(chart);
+                    };
+                    chartSelector.appendChild(button);
+
+                    // auto show first valid chart
+                    if (seen.size === 1) button.click();
+                });
+                if (seen.size === 0) {
+                    chartSelector.innerHTML = `<p class="text-slate-500 text-sm">AI returned charts but none were valid. Check console for raw response.</p>`;
+                    console.warn('PotentialCharts (invalid):', potentialCharts);
+                }
+            } else {
+                chartSelector.innerHTML = `<p class="text-slate-500 text-sm">No unique data found to generate charts.</p>`;
+                console.warn('No chart suggestions from AI (potentialCharts empty).');
+            }
+
+        } catch (error) {
+            console.error('Analysis failed:', error);
+            resultsOutput.innerHTML = `<p class="text-red-500">Error during analysis: ${error.message}</p>`;
+        } finally {
+            loader.style.display = 'none';
+        }
+    }
+
+    // ---------------------------
+
+    async function initializeApp(keys) {
+        // If keys object passed from Save button, set globals
+        if (keys) {
+            cohereApiKey = keys.cohere || cohereApiKey;
+            airtableApiKey = keys.airtable || airtableApiKey;
+            airtableBaseId = keys.baseId || airtableBaseId;
+            airtableTableName = keys.tableName || airtableTableName;
+        }
+
+        console.log("initializeApp values:", { airtableBaseId, airtableTableName, hasPAT: !!airtableApiKey, hasCohere: !!cohereApiKey });
+
+        try {
+            // Pass the explicit globals to avoid undefined usage
+            await fetchAirtableSchema(airtableApiKey, airtableBaseId, airtableTableName);
+            populateDropdowns();
+            await updateDashboard();
+            apiKeyModal.classList.remove('is-open');
+            attachAllEventListeners();
+        } catch (error) {
+            console.error("Initialization error:", error);
+            alert(`Initialization Failed: ${error.message}\nPlease check your Base ID, Table Name, and PAT permissions, then click 'Save and Start' again.`);
+            apiKeyModal.classList.add('is-open');
+        }
+    }
+
+    function loadApiKeysAndInitialize() {
+        const keys = {
+            cohere: localStorage.getItem('cohereApiKey'),
+            airtable: localStorage.getItem('airtableApiKey'),
+            baseId: localStorage.getItem('airtableBaseId'),
+            tableName: localStorage.getItem('airtableTableName')
+        };
+        if (!keys.cohere || !keys.airtable || !keys.baseId || !keys.tableName) {
+            apiKeyModal.classList.add('is-open');
+        } else {
+            initializeApp(keys);
+        }
+    }
+
+    function attachAllEventListeners() {
+        refreshDashboardBtn.addEventListener('click', updateDashboard);
+        kpiInProgressBtn.addEventListener('click', async () => {
+            resultsOutput.innerHTML = '';
+            try {
+                const formula = `{Status} = "In Progress"`;
+                const records = await fetchAirtableData(formula);
+                displayTabularResults(records);
+            } catch (error) {
+                console.error('Failed to fetch In Progress tests:', error);
+                resultsOutput.innerHTML = `<p class="text-red-500">Error: ${error.message}</p>`;
+            }
+        });
+
+        searchBtn.addEventListener('click', async () => {
+            const userPrompt = document.getElementById('search-prompt').value;
+            if (!userPrompt) return;
+            resultsOutput.innerHTML = '';
+            loader.style.display = 'flex';
+            try {
+                const processedPrompt = userPrompt.replace(/\btests\b/gi, 'test');
+                const formula = await getAirtableFormulaFromPrompt(processedPrompt);
+                const records = await fetchAirtableData(formula, true);
+                displayTabularResults(records);
+            } catch (error) {
+                console.error('Search failed:', error);
+                resultsOutput.innerHTML = `<p class="text-red-500">Error: ${error.message}</p>`;
+            } finally {
+                loader.style.display = 'none';
+            }
+        });
+
+        testDataForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const fields = {
+                "Project": document.getElementById('Project').value, "Date": document.getElementById('Date').value,
+                "Stage": document.getElementById('Stage').value, "Test Name": document.getElementById('Test_Name').value,
+                "Status": document.getElementById('Status').value, "Spec Km/cycles": parseInt(document.getElementById('Spec_Km_cycles').value, 10)
+            };
+            const testId = document.getElementById('Test_Id').value;
+            if (testId) fields["Test Id"] = testId;
+            const startDate = document.getElementById('Start_Date').value;
+            if (startDate) fields["Start Date"] = startDate;
+
+            const payload = { records: [{ fields }] };
+            const url = `https://api.airtable.com/v0/${airtableBaseId}/${encodeURIComponent(airtableTableName)}`;
+            try {
+                const response = await fetch(url, { method: 'POST', headers: { 'Authorization': `Bearer ${airtableApiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                if (!response.ok) { const errorData = await response.json().catch(() => ({})); throw new Error(`Airtable API error: ${errorData.error?.message || 'Unknown error'}`); }
+                alert('Test record added successfully!');
+                testDataForm.reset();
+                updateDashboard();
+            } catch (error) {
+                console.error('Failed to add record:', error);
+                alert(`Failed to add record. ${error.message}`);
+            }
+        });
+
+        cancelEditBtn.addEventListener('click', () => editModal.classList.remove('is-open'));
+
+        editForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const recordId = document.getElementById('edit-record-id').value;
+            const failureTypes = document.getElementById('edit-Failure_Type').value.split(',').map(s => s.trim()).filter(Boolean);
+            const failureParts = document.getElementById('edit-Failure_Part').value.split(',').map(s => s.trim()).filter(Boolean);
+            const updatedFields = { "Test Id": document.getElementById('edit-Test_Id').value, "Status": document.getElementById('edit-Status').value, "End Date": document.getElementById('edit-End_Date').value, "Failure Type": failureTypes, "Failure Part": failureParts, "Failure Observation": document.getElementById('edit-Failure_Observation').value };
+            const failedKmCyclesValue = document.getElementById('edit-Failed_km_cycles').value;
+            if (failedKmCyclesValue) updatedFields["Failed km/cycles"] = parseInt(failedKmCyclesValue, 10);
+            for (const key in updatedFields) { if (!updatedFields[key] || (Array.isArray(updatedFields[key]) && updatedFields[key].length === 0)) delete updatedFields[key]; }
+            const url = `https://api.airtable.com/v0/${airtableBaseId}/${encodeURIComponent(airtableTableName)}/${recordId}`;
+            try {
+                const response = await fetch(url, { method: 'PATCH', headers: { 'Authorization': `Bearer ${airtableApiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: updatedFields }) });
+                if (!response.ok) { const errorData = await response.json().catch(() => ({})); throw new Error(`Airtable API error: ${errorData.error?.message || 'Unknown error'}`); }
+                alert('Record updated successfully!');
+                editModal.classList.remove('is-open');
+                updateDashboard();
+                if(document.getElementById('search-prompt').value) searchBtn.click();
+            } catch (error) {
+                console.error('Failed to update record:', error);
+                alert(`Failed to update record. ${error.message}`);
+            }
+        });
+    }
+
+    // --- SETUP EVENT LISTENERS ---
+    testConnectionBtn.addEventListener('click', async () => {
+        const tempCohereKey = document.getElementById('cohere-key').value;
+        const tempAirtableKey = document.getElementById('airtable-key').value;
+        const tempBaseId = document.getElementById('airtable-base-id').value;
+        const tempTableName = document.getElementById('airtable-table-name').value;
+
+        connectionStatus.className = 'mb-4 p-3 rounded-md text-sm';
+        connectionStatus.textContent = 'Testing Airtable connection...';
+
+        try {
+            await fetchAirtableSchema(tempAirtableKey, tempBaseId, tempTableName);
+            connectionStatus.textContent = 'Airtable connection is working. Testing Cohere connection...';
+            connectionStatus.classList.add('bg-blue-100', 'text-blue-800');
+
+            // Cohere provides an endpoint to check API key; using basic connectivity test:
+            const resp = await fetch('https://api.cohere.ai/v1/check-api-key', {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${tempCohereKey}` }
+            });
+            if (!resp.ok) {
+                const errText = await resp.text().catch(() => 'Unable to read response');
+                throw new Error(`Cohere API key test failed (${resp.status}): ${errText}`);
+            }
+
+            connectionStatus.textContent = 'Success! All connections are working.';
+            connectionStatus.classList.remove('bg-blue-100', 'text-blue-800');
+            connectionStatus.classList.add('bg-green-100', 'text-green-800');
+
+        } catch (error) {
+            connectionStatus.textContent = `Failed: ${error.message}`;
+            connectionStatus.classList.add('bg-red-100', 'text-red-800');
+        }
+    });
+
+    saveKeysBtn.addEventListener('click', () => {
+        const keys = {
+            cohere: document.getElementById('cohere-key').value.trim(),
+            airtable: document.getElementById('airtable-key').value.trim(),
+            baseId: document.getElementById('airtable-base-id').value.trim(),
+            tableName: document.getElementById('airtable-table-name').value.trim()
+        };
+
+        localStorage.setItem('cohereApiKey', keys.cohere);
+        localStorage.setItem('airtableApiKey', keys.airtable);
+        localStorage.setItem('airtableBaseId', keys.baseId);
+        localStorage.setItem('airtableTableName', keys.tableName);
+
+        // Pass keys into initializeApp so globals are set before any Airtable calls
+        initializeApp(keys);
+    });
+
+    // --- INITIALIZATION ---
+    Chart.register(ChartDataLabels);
+    loadApiKeysAndInitialize();
+});
+</script>
+</body>
+</html>
